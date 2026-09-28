@@ -1,0 +1,79 @@
+#pragma once
+
+#include<array>
+#include<cstddef>
+#include<memory>
+
+namespace exchange::core{
+    //at compile time, this template will hv 2 parameters
+    template <typename T, std::size_t N>
+    
+    //constructor will run on run time
+    class MemoryPool {
+        static_assert(N > 0, "MemoryPool capacity must be positive.");
+        static_assert(sizeof(T) >= sizeof(void *), "Object storage must fit an intrusive free-list pointer.");
+
+        struct alignas((alignof(T) > 64U) ? alignof(T): 64U) Slot {
+            std::array<std::byte, sizeof(T)>storage{};
+        };
+
+        struct FreeNode {
+          FreeNode *next;
+        };
+
+
+        public:
+          MemoryPool() {} : slots_(std::make_unique<Slot[]>(N)) {initialize_free_list()};
+
+          MemoryPool(const MemoryPool &) = delete;
+          MemoryPool &operator=(const MemoryPool &) = delete;
+          MemoryPool (MemoryPool &&) = delete;
+          MemoryPool &operator=(MemoryPool &&) = delete;
+
+          T *allocate() noexcept {
+            if (free_list_head_ == nullptr ) [[unlikely]] {
+                return nullptr;
+            }
+
+            FreeNode *node = free_list_head_;
+            free_list_head_ = free_list_head_ -> next;
+            ++allocated_count_;
+            return reinterpret_cast<T *>(node);
+
+          }
+
+          void dealloacate(T *object) noexcept {
+            if (object == nullptr) [[unlikely]] {
+                return;
+            }
+
+            std::destroy_at(object);
+            auto *node = reinterpret_cast<FreeNode *>(object);
+            node -> next = free_list_head_;
+            free_list_head_ = node;
+            --allocated_count_;
+          }
+
+        //   [[nodiscard]] constexpr std::size_t capacity() const noexcept {return N};
+
+        //   [[nodiscard]] bool empty() const noexcept {
+        //     return free_list_head_ == nullptr;
+        //   }
+
+        private:
+
+         void initialize_free_list() noexcept {
+            free_list_head_ = nullptr;
+            for( std::size_t index = 0;index < N; ++index) {
+                auto *node = reinterpret_cast<FreeNode *>(slots_[index].storage.data());
+                node->next = free_list_head_;
+                free_list_head_ = node;
+            }
+         }
+         std::unique_ptr<Slot[]> slots_;
+
+         FreeNode *free_list_head_{nullptr};
+
+         std::size_t allocated_count_{0};
+    };
+}
